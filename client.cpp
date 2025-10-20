@@ -330,7 +330,7 @@ int main(int argc, char* argv[]) {
 
     std::string server_ip = args[1];
     int server_port = std::stoi(args[2]);
-    DWORD ElapsingTime = argc == 4 ? std::stoi(args[3]) : 3000;
+    DWORD ElapsingTime = argc == 4 ? std::stoi(args[3]) : 30000;
     Client client(server_ip, server_port, ElapsingTime);
     
     client.start();
