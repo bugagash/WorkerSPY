@@ -42,6 +42,9 @@ g++ client.cpp -o client.exe -lws2_32 -lgdi32
 Запуск:
 ```bash
 client.exe server_ip server_port [timeout_ms]
+
+# Working example
+client.exe 127.0.0.1 8888 30000
 ```
 Параметры: `<server_ip> <server_port> [timeout_ms]`
 
