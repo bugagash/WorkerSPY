@@ -20,3 +20,8 @@ rad.json
 *.flf
 #Test results file
 TestResults.xml
+# Output files
+logs/*
+screen/*
+clients_db.json
+client.exe
