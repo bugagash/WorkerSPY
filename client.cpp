@@ -252,7 +252,7 @@ public:
 
         // Combining JSON-like message
         std::string message = buildJSONprocs(procs);
-        std::string message_info = "ProcessJSON, " + std::to_string(message.length());
+        std::string message_info = "ProcessJSON, " + std::to_string(message.length()) + '\n';
 
         // Send to server
         if (!send_message(message_info) || !send_message(message)) return false;
