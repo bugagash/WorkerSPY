@@ -1,6 +1,7 @@
 #include <winsock2.h>   // WinAPI sockets
 #include <ws2tcpip.h>   // Types references
 #include <TlHelp32.h>   // Types references
+#include <iphlpapi.h>   // MAC adress access
 #include <iostream>
 #include <string>
 #include <vector>
@@ -8,6 +9,7 @@
 
 #pragma comment(lib, "ws2_32.lib")
 #pragma comment(lib, "gdi32.lib")
+#pragma comment(lib, "iphlpapi.lib")
 
 
 class Client {
@@ -75,6 +77,114 @@ private:
         return result;
     }
 
+    std::string getMacAddress() {
+        // Getting buffer size information
+        ULONG bufferSize = 0;
+        if (GetAdaptersInfo(NULL, &bufferSize) != ERROR_BUFFER_OVERFLOW) {
+            return "ERROR";
+        }
+        
+        // Malloc mem for adapter
+        PIP_ADAPTER_INFO adapterInfo = (PIP_ADAPTER_INFO)malloc(bufferSize);
+        if (adapterInfo == NULL) {
+            return "ERROR";
+        }
+        
+        // Getting information about adapter
+        if (GetAdaptersInfo(adapterInfo, &bufferSize) != NO_ERROR) {
+            free(adapterInfo);
+            return "ERROR";
+        }
+        
+        PIP_ADAPTER_INFO adapter = adapterInfo;
+        std::string macAddress;
+        
+        // Get first active adapter
+        while (adapter) {
+            // WIFI/Ethernet
+            if (adapter->Type == MIB_IF_TYPE_ETHERNET || adapter->Type == IF_TYPE_IEEE80211) {
+                
+                // "XX:XX:XX:XX:XX:XX" = 17 + \0
+                char buffer[18];
+                
+                sprintf(buffer, "%02X:%02X:%02X:%02X:%02X:%02X",
+                        adapter->Address[0],
+                        adapter->Address[1],
+                        adapter->Address[2],
+                        adapter->Address[3],
+                        adapter->Address[4],
+                        adapter->Address[5]);
+                
+                macAddress = buffer;
+                break;
+            }
+            
+            adapter = adapter->Next;
+        }
+        
+        free(adapterInfo);
+        if (macAddress.empty()) {
+            return "ERROR";
+        }
+        
+        return macAddress;
+    }
+
+    std::vector<uint8_t> captureScreen(){
+        int screenX = GetSystemMetrics(SM_XVIRTUALSCREEN);
+        int screenY = GetSystemMetrics(SM_YVIRTUALSCREEN);
+        int width   = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+        int height  = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+
+        HDC hScreenDC = GetDC(NULL);
+        HDC hMemDC = CreateCompatibleDC(hScreenDC);
+        HBITMAP hBitmap = CreateCompatibleBitmap(hScreenDC, width, height);
+        SelectObject(hMemDC, hBitmap);
+
+        if (!BitBlt(hMemDC, 0, 0, width, height, hScreenDC, screenX, screenY, SRCCOPY|CAPTUREBLT)) {
+            std::vector<uint8_t> buffer;
+            DeleteObject(hBitmap);
+            DeleteDC(hMemDC);
+            ReleaseDC(NULL, hScreenDC);
+            return buffer;
+        }
+
+        // BMP-headers
+        BITMAP bmp;
+        GetObjectW(hBitmap, sizeof(bmp), &bmp);
+        BITMAPINFOHEADER bih = {};
+        bih.biSize = sizeof(BITMAPINFOHEADER);
+        bih.biWidth = width;
+        bih.biHeight = height;
+        bih.biPlanes = 1;
+        bih.biBitCount = 32;
+        bih.biCompression = BI_RGB;
+
+        int rowBytes = ((bmp.bmWidth * 32 + 31) / 32) * 4;
+        DWORD pixelDataSize = rowBytes * bmp.bmHeight;
+        BITMAPFILEHEADER bfh = {};
+        bfh.bfType = 0x4D42;
+        bfh.bfOffBits = sizeof(bfh) + sizeof(bih);
+        bfh.bfSize = bfh.bfOffBits + pixelDataSize;
+
+        std::vector<uint8_t> buffer(bfh.bfSize);
+        memcpy(buffer.data(), &bfh, sizeof(bfh));
+        memcpy(buffer.data() + sizeof(bfh), &bih, sizeof(bih));
+
+        if (!GetDIBits(hMemDC, hBitmap, 0, bmp.bmHeight, buffer.data() + bfh.bfOffBits, (BITMAPINFO*)&bih, DIB_RGB_COLORS)) {
+            DeleteObject(hBitmap);
+            DeleteDC(hMemDC);
+            ReleaseDC(NULL, hScreenDC);
+            buffer.clear();
+            return buffer;
+        }
+
+        DeleteObject(hBitmap);
+        DeleteDC(hMemDC);
+        ReleaseDC(NULL, hScreenDC);
+
+        return buffer;
+    }
 
 public:
     // Create client with Elapsing Time (socket waiting Time Out) = 30s default
@@ -131,7 +241,6 @@ public:
             return false;
         }
         
-        std::cout << "Sent " << sent << " bytes" << std::endl;
         return true;
     }
     
@@ -141,16 +250,13 @@ public:
         // Get all process
         std::vector<ProcInfo> procs = getRunningProcesses();
 
-        // Combining JSON like message
+        // Combining JSON-like message
         std::string message = buildJSONprocs(procs);
-        std::string message_info = "ProcessJSON, " + std::to_string(message.length()) + "\n";
+        std::string message_info = "ProcessJSON, " + std::to_string(message.length());
 
         // Send to server
-        if (!send_message(message_info) || !send_message(message)) {
-            std::cout << "Statistics was not sent to server" << std::endl;
-            return false;
-        }
-        std::cout << "Statistics was sent to server" << std::endl;
+        if (!send_message(message_info) || !send_message(message)) return false;
+        
         return true;
     }
 
@@ -186,90 +292,59 @@ public:
 
     // Sending Screenshot to server
     bool sendScreenshot() {
-        // Capturing screen
-        int screenX = GetSystemMetrics(SM_XVIRTUALSCREEN);
-        int screenY = GetSystemMetrics(SM_YVIRTUALSCREEN);
-        int width = GetSystemMetrics(SM_CXVIRTUALSCREEN);
-        int height = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+        std::vector<uint8_t> screen = captureScreen();
+        if (screen.empty()) return false;
 
-        HDC hScreenDC = GetDC(NULL);
-        HDC hMemDC = CreateCompatibleDC(hScreenDC);
-        HBITMAP hBitmap = CreateCompatibleBitmap(hScreenDC, width, height);
-        SelectObject(hMemDC, hBitmap);
-        
-        if (!BitBlt(hMemDC, 0, 0, width, height, hScreenDC, screenX, screenY, SRCCOPY|CAPTUREBLT)) {
-            DeleteObject(hBitmap);
-            DeleteDC(hMemDC);
-            ReleaseDC(NULL, hScreenDC);
-            return false;
-        }
+        std::string screen_str = std::string(reinterpret_cast<const char *>(screen.data()), screen.size());
+        std::string screen_str_info = "ScreenShot BMP, " + std::to_string(screen_str.length()) + "\n";
+        if (!send_message(screen_str_info) || !send_message(screen_str)) return false;
 
-        // BMP-headers
-        BITMAP bmp;
-        GetObjectW(hBitmap, sizeof(bmp), &bmp);
-        BITMAPINFOHEADER bih = {};
-        bih.biSize = sizeof(bih);
-        bih.biWidth = bmp.bmWidth;
-        bih.biHeight = bmp.bmHeight;
-        bih.biPlanes = 1;
-        bih.biBitCount = 32;
-        bih.biCompression = BI_RGB;
-
-        int rowBytes = ((bmp.bmWidth * 32 + 31) / 32) * 4;
-        DWORD pixelDataSize = rowBytes * bmp.bmHeight;
-
-        BITMAPFILEHEADER bfh = {};
-        bfh.bfType = 0x4D42;  // 'BM'
-        bfh.bfOffBits = sizeof(bfh) + sizeof(bih);
-        bfh.bfSize = bfh.bfOffBits + pixelDataSize;
-
-        // 3) Читаем пиксели
-        std::vector <uint8_t> buffer(bfh.bfSize);
-        // Копируем заголовки
-        memcpy(buffer.data(), &bfh, sizeof(bfh));
-        memcpy(buffer.data() + sizeof(bfh), &bih, sizeof(bih));
-
-        // Получаем пиксели
-        if (!GetDIBits(hMemDC, hBitmap, 0, bmp.bmHeight, buffer.data() + bfh.bfOffBits, (BITMAPINFO*)&bih, DIB_RGB_COLORS)) {
-            DeleteObject(hBitmap);
-            DeleteDC(hMemDC);
-            ReleaseDC(NULL, hScreenDC);
-            return false;
-        }
-
-        // Release GDI
-        DeleteObject(hBitmap);
-        DeleteDC(hMemDC);
-        ReleaseDC(NULL, hScreenDC);
-
-        std::string screen_data = std::string(reinterpret_cast<const char *>(buffer.data()), buffer.size());
-        std::string screen_data_info = "ScreenShot BMP, " + std::to_string(screen_data.length()) + "\n"; // Operation Header
-        
-        if (!send_message(screen_data_info) || !send_message(screen_data)) {
-            std::cout << "Screenshoot was NOT sent to server!" << std::endl;
-            return false;
-        }
-
-        std::cout << "Screenshoot was sent to server!" << std::endl;
         return true;
     }
     
+    bool sendMACaddress() {
+        std::string mac = getMacAddress();
+        std::string mac_info = "MAC_ADDRESS, " + std::to_string(mac.length());
+        if (mac.find("ERROR") != std::string::npos) return false;
+        if (!send_message(mac_info) || !send_message(mac)) return false;
+        
+        return true;
+    }
+
     // Compatiable commands from server
-    void ValidateCommand(const std::string& command) {
+    bool ValidateCommand(const std::string& command) {
         std::string ProcessStatCommand = "SEND_STAT";
         std::string DeauthCommand = "DEAUTH_REQUEST";
         std::string ScreenShoot = "SEND_SCREEN";
+        std::string MacCommand = "SEND_MAC";
 
         if (command.find(ProcessStatCommand) != std::string::npos) {
-            sendProcessStatistics();
-        }
-        else if (command.find(DeauthCommand) != std::string::npos) {
-            std::cout << "Server DEAUTH REQUEST" << std::endl;
-            disconnect();
+            if (!sendProcessStatistics()) {
+                std::cout << "Can\'t send process statistic to server" << std::endl;
+                return false;
+            }
         }
         else if (command.find(ScreenShoot) != std::string::npos) {
-            if (!sendScreenshot()) std::cout << "Can\'t send screenshoot to server!" << std::endl;;
+            if (!sendScreenshot()) {
+                std::cout << "Can\'t send screenshoot to server" << std::endl;
+                return false;
+            }
         }
+        else if (command.find(MacCommand) != std::string::npos) {
+            if (!sendMACaddress()) {
+                std::cout << "can\'t send MAC adress to server" << std::endl;
+                return false;
+            }
+        }
+        else if (command.find(DeauthCommand) != std::string::npos) {
+            disconnect();
+        }
+
+        else {
+            std::cout << "Server message:\n" << command<< std::endl;
+        }
+
+        return true;
     }
 
     // Disconnecting
@@ -281,8 +356,7 @@ public:
             std::cout << "Disconnected!" << std::endl;
         }
     }
-    
-    // Connection check
+
     bool is_connected() const {
         return connected;
     }
@@ -292,27 +366,26 @@ public:
         if (!connect_to_server()) return;
         
         int elapsed_ms = 0;
-        std::string welcome;
         std::string response;
-        receive_message(welcome, elapsed_ms);
-        std::cout << welcome << std::endl;
-
         while (is_connected()){
             if (!receive_message(response, elapsed_ms)) {
                 disconnect();
-                std::cout << "\nError while getting response from server\n";
                 break;
             }
 
             // If message from server was received
             if (!response.empty()) {
-                ValidateCommand(response);
+                if (!ValidateCommand(response)) {
+                    std::cout << "Error handeling: " << response << std::endl;
+                    disconnect();
+                    break;
+                }
                 response.erase();
             }
 
             // If have been waiting for 10 minutes -- Disconnect
             if (elapsed_ms >= 600000) {  
-                std::cout << "\nNot getting responses from server through wiating time. Disconnect...\n";
+                std::cout << "Not getting responses from server through wiating time. Disconnect..." << std::endl;
                 disconnect();
                 break;
             }
@@ -322,17 +395,25 @@ public:
 
 int main(int argc, char* argv[]) {
     SetConsoleOutputCP(CP_UTF8);
-    
-    std::vector <std::string> args;
-    for (int i = 0; i < argc; ++i) {
-        args.emplace_back(argv[i]);
-    }
+    std::string server_ip;
+    int server_port;
+    DWORD ElapsingTime;
 
-    std::string server_ip = args[1];
-    int server_port = std::stoi(args[2]);
-    DWORD ElapsingTime = argc == 4 ? std::stoi(args[3]) : 30000;
-    Client client(server_ip, server_port, ElapsingTime);
+    if (argc == 1) {
+        server_ip = "127.0.0.1";
+        server_port = 8888;
+        ElapsingTime = 30000;
+    }
+    else {
+        std::vector <std::string> args;
+        for (int i = 0; i < argc; ++i) args.emplace_back(argv[i]);
+        
+        server_ip = args[1];
+        server_port = std::stoi(args[2]);
+        ElapsingTime = argc == 4 ? std::stoi(args[3]) : 30000;
+    }
     
+    Client client(server_ip, server_port, ElapsingTime);
     client.start();
 
     return 0;
