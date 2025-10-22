@@ -17,9 +17,9 @@
 
 - Компилятор: c++
 - Библиотеки:
-  - `ws2_32.lib` (WinSock2)
-  - `gdi32.lib` (GDI)
-  - `user32.lib` (для GetDC/ReleaseDC)
+`ws2_32.lib` (WinSock2)
+`gdi32.lib` (GDI)
+`user32.lib` (для GetDC/ReleaseDC)
 
 2.  **Сервер (Linux, Windows)**
 
@@ -38,6 +38,9 @@ cl client.cpp /EHsc /link ws2_32.lib gdi32.lib user32.lib iphlpapi.lib
 
 # MinGW/GCC
 g++ client.cpp -o client.exe -lws2_32 -lgdi32 -liphlpapi
+
+# For independent client.exe
+g++ client.cpp -o client.exe -static -pthread -static-libgcc -static-libstdc++ -lws2_32 -liphlpapi -lgdi32
 ```
 
 Запуск:
@@ -68,6 +71,6 @@ python serverExample.py
 1. TCP-соединение.
 
 2. Запросы/сообщения:
-   - MAC адресс клиента.
-   - JSON со списком процессов
-   - Скриншот BMP: сначала 4 байта длины (htonl), затем N байт данных
+MAC адресс клиента.
+JSON со списком процессов
+Скриншот BMP: сначала 4 байта длины (htonl), затем N байт данных
