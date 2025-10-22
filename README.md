@@ -24,7 +24,7 @@
 2.  **Сервер (Linux, Windows)**
 
 - Python
-- Модули стандартной библиотеки: `socket`, `os`, `datetime`
+- Модули стандартной библиотеки: `socket`, `threading`, `pathlib`, `json`, `datetime`
 
 ---
 
@@ -56,7 +56,7 @@ client.exe 127.0.0.1 8888 30000
 2. **Сервер (server.py)**
 
 ```bash
-python serverExample.py
+python server.py
 ```
 
 Слушает порт 8888. Сохраняет:
