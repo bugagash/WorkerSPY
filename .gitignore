@@ -25,3 +25,4 @@ logs/*
 screen/*
 clients_db.json
 client.exe
+.python-version
