@@ -89,6 +89,11 @@ class ClientDatabase:
             return self.clients_data[client_mac]['connection_history']
         return []
 
+class ClientConnection:
+    """Class for client"""
+    def __init__(self, client_socket: socket.socket, client_mac: str, client_address: tuple[str, str]):
+        info = {}
+
 class Server:
     """"Classs for server realisation."""
     def __init__(self):
@@ -145,34 +150,41 @@ class Server:
             curr_client_input = None # ["ProcessJSON", "ScreenShot BMP"]
             client_message_chunks = [] # Get client's big data by 4096 bytes chunks if needed
             curr_client_message_size = None
+            receiving_size = 1 # Receive message by 1 bytes until full Header read
 
             # Endless messages receiving process
             while self.server_running:
                 client_socket.settimeout(1.0)
 
                 try:
-                    data = client_socket.recv(4096)
+                    data = client_socket.recv(receiving_size)
                         
                     if not data:
                         break
                     
                     # Not in receiving process from client
                     if not curr_client_input:
-                        message = data.decode('utf-8').strip().split(',')
+                        chunk = data.decode('utf-8')
+                        client_message_chunks.append(chunk)
                         
-                        if message[0] not in ["ProcessJSON", "ScreenShot BMP"]:
-                            print("Unrecognized message from user\n")
-                        else:
-                            curr_client_input = message[0]
-                            curr_client_message_size = int(message[1])
+                        if chunk == '\n':
+                            message = "".join(client_message_chunks).split(',')
+                            if message[0] not in ["ProcessJSON", "ScreenShot BMP"]:
+                                print("Unrecognized message from user\n")
+                            else:
+                                curr_client_input = message[0]
+                                curr_client_message_size = int(message[1])
+                                client_message_chunks = []
+                                receiving_size = 4096
 
                     # Receiving Process Information from client
                     elif curr_client_input == "ProcessJSON":
-                        message = data.decode('utf-8').strip()
+                        message = data.decode('utf-8')
                         client_message_chunks.append(message)
                         client_message = ''.join(client_message_chunks)
-
-                        if len(client_message) == curr_client_message_size - 1 or len(message) < 4096:
+                        receiving_size = min(4096, curr_client_message_size - len(client_message))
+                        
+                        if len(client_message) == curr_client_message_size:
                             filename = client_db_data['mac'].replace(':', '_')
                             self.log_client_message(filename, client_message)
                             print(f"Received running processes from client {client_mac} ({client_ip}:{client_port})\n")
@@ -180,13 +192,15 @@ class Server:
                             client_message_chunks = []
                             curr_client_input = None
                             curr_client_message_size = None
+                            receiving_size = 1
 
                     # Receiving screenshot from client
                     elif curr_client_input == "ScreenShot BMP":
                         client_message_chunks.append(data)
                         bytes_read = sum([len(chunk) for chunk in client_message_chunks])
-                        
-                        if bytes_read == curr_client_message_size or len(data) < 4096:
+                        receiving_size = min(4096, curr_client_message_size - bytes_read)
+
+                        if bytes_read == curr_client_message_size:
                             filename = client_db_data['mac'].replace(':', '_')
                             self.save_screenshoot(filename, client_message_chunks)
                             print(f"Received screenshot from client {client_mac} ({client_ip}:{client_port})\n")
@@ -194,6 +208,7 @@ class Server:
                             client_message_chunks = []
                             curr_client_input = None
                             curr_client_message_size = None
+                            receiving_size = 1
                 
                 except socket.timeout:
                     continue
